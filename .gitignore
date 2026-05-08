@@ -1,0 +1,11 @@
+.worktrees/
+.env
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+dota_bot/cache.json
+dota_bot/players.json
