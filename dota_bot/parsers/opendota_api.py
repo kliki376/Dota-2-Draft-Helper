@@ -74,6 +74,7 @@ class OpenDotaClient:
         ]
 
     async def get_hero_stats_with_role(self) -> dict[int, HeroMetaWithRole]:
+        from dota_bot.hero_roles import get_primary_position
         resp = await self._http.get(f"{BASE_URL}/heroStats")
         resp.raise_for_status()
         data = resp.json()
@@ -82,14 +83,15 @@ class OpenDotaClient:
         result: dict[int, HeroMetaWithRole] = {}
         for h, total_games in zip(data, all_games):
             total_wins = sum(h.get(f"{b}_win", 0) for b in BRACKETS)
+            slug = h["name"].replace("npc_dota_hero_", "")
             result[h["id"]] = HeroMetaWithRole(
                 hero_id=h["id"],
-                hero_slug=h["name"].replace("npc_dota_hero_", ""),
+                hero_slug=slug,
                 win_rate=total_wins / total_games if total_games > 0 else 0.5,
                 pick_rate=total_games / max_games,
                 pro_pick=h.get("pro_pick", 0),
                 pro_win=h.get("pro_win", 0),
-                lane_role=h.get("lane_role", 0),
+                lane_role=get_primary_position(slug),
             )
         return result
 

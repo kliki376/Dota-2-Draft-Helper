@@ -75,6 +75,7 @@ POSITIONS = [
 
 def meta_position_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Топ 10 общая", callback_data="meta:top10")],
         [InlineKeyboardButton(POSITIONS[0][0], callback_data=POSITIONS[0][1]),
          InlineKeyboardButton(POSITIONS[1][0], callback_data=POSITIONS[1][1]),
          InlineKeyboardButton(POSITIONS[2][0], callback_data=POSITIONS[2][1])],
