@@ -12,7 +12,6 @@ from telegram.ext import (
 )
 
 from dota_bot.cache import Cache
-from dota_bot.image_gen import build_meta_image
 from dota_bot.config import BOT_TOKEN, CACHE_FILE, CACHE_TTL_SECONDS, OPENDOTA_API_KEY
 from dota_bot.formatter import format_meta, format_picks, format_meta_by_position, format_player_stats, format_top_heroes
 from dota_bot.keyboards import (
@@ -408,9 +407,7 @@ async def callback_meta(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 key=lambda x: x[1].win_rate,
                 reverse=True,
             )[:10]
-            image = build_meta_image(sorted_heroes, title="📈 Топ 10 общая мета")
-            await query.message.reply_photo(photo=image, caption="📈 Топ 10 общая мета")
-            await query.message.delete()
+            await query.edit_message_text(format_meta(sorted_heroes))
         except Exception:
             logger.exception("Error in callback_meta top10")
             await query.edit_message_text("❌ Ошибка при загрузке данных.")
@@ -418,8 +415,6 @@ async def callback_meta(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if data.startswith("meta:pos:"):
         position = int(data[-1])
-        pos_names = {1: "Carry", 2: "Mid", 3: "Offlane", 4: "Soft Support", 5: "Hard Support"}
-        pos_name = pos_names.get(position, str(position))
         await query.edit_message_text("⏳ Загружаю данные меты...")
         try:
             hero_stats = await _client.get_hero_stats_with_role()
@@ -435,10 +430,7 @@ async def callback_meta(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 key=lambda x: x[1].win_rate,
                 reverse=True,
             )[:10]
-            title = f"📈 Топ {len(filtered)} — {pos_name}"
-            image = build_meta_image(filtered, title=title)
-            await query.message.reply_photo(photo=image, caption=title)
-            await query.message.delete()
+            await query.edit_message_text(format_meta_by_position(filtered, position))
         except Exception:
             logger.exception("Error in callback_meta")
             await query.edit_message_text("❌ Ошибка при загрузке данных.")
