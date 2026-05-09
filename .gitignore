@@ -9,4 +9,3 @@ dist/
 build/
 dota_bot/cache.json
 dota_bot/players.json
-dota_bot/icons/
