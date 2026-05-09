@@ -1,19 +1,18 @@
 import logging
 import re
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
-    ConversationHandler,
-    MessageHandler,
     ContextTypes,
-    filters,
 )
 
 from dota_bot.cache import Cache
 from dota_bot.config import BOT_TOKEN, CACHE_FILE, CACHE_TTL_SECONDS, OPENDOTA_API_KEY
 from dota_bot.formatter import format_meta, format_picks
+from dota_bot.keyboards import group_keyboard, hero_keyboard, heroes_for_group
 from dota_bot.models import HeroInfo, HeroMatchup, HeroMeta, PlayerHeroStats
 from dota_bot.parsers.hero_names import HeroNameResolver
 from dota_bot.parsers.opendota_api import OpenDotaClient
@@ -22,8 +21,6 @@ from dota_bot.scorer import score_picks
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
-
-WAITING_ENEMIES, WAITING_ALLIES = range(2)
 
 _client: OpenDotaClient | None = None
 _cache: Cache | None = None
@@ -88,68 +85,146 @@ def _parse_steam_id(text: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-# ── /pick conversation ────────────────────────────────────────────────────────
+def _pick_header(phase: int, count: int, picked_names: list[str] | None = None) -> str:
+    label = "Фаза 1" if phase == 1 else "Фаза 2"
+    header = f"⚔️ {label} — Враг пикает 2 героев ({count}/2)"
+    if picked_names:
+        header += "\n" + "\n".join(f"  • {name}" for name in picked_names)
+    return header
 
-async def pick_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
+# ── /pick inline keyboard ─────────────────────────────────────────────────────
+
+async def cmd_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.update({
+        "phase": 1,
+        "phase1_enemies": [],
+        "current_picks": [],
+    })
     await update.message.reply_text(
-        "Введите героев врага через запятую:\n\n"
-        "Пример: Axe, Invoker, Crystal Maiden, PA, Lion"
+        _pick_header(1, 0),
+        reply_markup=group_keyboard(),
     )
-    return WAITING_ENEMIES
 
 
-async def pick_got_enemies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def _show_phase1_results(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    enemies = [HeroInfo(**p) for p in context.user_data["phase1_enemies"]]
+    id_to_slug = {h.id: h.slug for h in _all_heroes}
     try:
-        enemies = _resolver.parse_input(update.message.text)
-    except ValueError as e:
-        await update.message.reply_text(f"❌ {e}\n\nПопробуйте ещё раз:")
-        return WAITING_ENEMIES
-    context.user_data["enemies"] = [
-        {"id": h.id, "slug": h.slug, "localized_name": h.localized_name} for h in enemies
-    ]
-    await update.message.reply_text(
-        "Введите союзных героев через запятую (или /skip чтобы пропустить):\n\n"
-        "Пример: Shadow Fiend, Rubick"
-    )
-    return WAITING_ALLIES
-
-
-async def pick_got_allies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    try:
-        _resolver.parse_input(update.message.text)  # validate only; allies unused in v1.0 scoring
-    except ValueError as e:
-        await update.message.reply_text(f"❌ {e}\n\nПопробуйте ещё раз или /skip:")
-        return WAITING_ALLIES
-    return await _do_pick(update, context)
-
-
-async def pick_skip_allies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await _do_pick(update, context)
-
-
-async def _do_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("⏳ Анализирую данные...")
-    enemies = [HeroInfo(**h) for h in context.user_data.get("enemies", [])]
-    account_id = _profiles.get(update.effective_user.id)
-    try:
-        id_to_slug = {h.id: h.slug for h in _all_heroes}
         hero_stats = await _fetch_hero_stats()
         enemy_matchups = await _fetch_enemy_matchups(enemies, id_to_slug)
-        player_stats: dict[int, PlayerHeroStats] | None = None
+        account_id = _profiles.get(query.from_user.id)
+        player_stats = None
         if account_id:
             plist = await _client.get_player_heroes(account_id, id_to_slug)
             player_stats = {p.hero_id: p for p in plist}
         scores = score_picks(enemies, _all_heroes, hero_stats, enemy_matchups, player_stats)
-        await update.message.reply_text(format_picks(scores, with_profile=bool(account_id)))
+        text = format_picks(scores, with_profile=bool(account_id))
+        text += "\n\n━━━━━━━━━━━━━━━━━━━━\nГотов к фазе 2? Выбери следующих двух врагов."
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Фаза 2 →", callback_data="phase2")],
+                [InlineKeyboardButton("✖ Завершить", callback_data="cancel")],
+            ]),
+        )
     except Exception:
-        logger.exception("Error during /pick")
-        await update.message.reply_text("❌ Ошибка при получении данных. Попробуйте позже.")
-    return ConversationHandler.END
+        logger.exception("Error in phase 1 results")
+        await query.edit_message_text("❌ Ошибка при получении данных. Попробуйте позже.")
 
 
-async def pick_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Отменено.")
-    return ConversationHandler.END
+async def _show_phase2_results(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    phase1 = [HeroInfo(**p) for p in context.user_data["phase1_enemies"]]
+    phase2 = [HeroInfo(**p) for p in context.user_data["current_picks"]]
+    all_enemies = phase1 + phase2
+    id_to_slug = {h.id: h.slug for h in _all_heroes}
+    try:
+        hero_stats = await _fetch_hero_stats()
+        enemy_matchups = await _fetch_enemy_matchups(all_enemies, id_to_slug)
+        account_id = _profiles.get(query.from_user.id)
+        player_stats = None
+        if account_id:
+            plist = await _client.get_player_heroes(account_id, id_to_slug)
+            player_stats = {p.hero_id: p for p in plist}
+        scores = score_picks(all_enemies, _all_heroes, hero_stats, enemy_matchups, player_stats, top_n=3)
+        text = "🏆 Ласт пик — лучший выбор против всех 4 врагов:\n\n"
+        text += format_picks(scores, with_profile=bool(account_id))
+        await query.edit_message_text(text)
+        context.user_data.clear()
+    except Exception:
+        logger.exception("Error in phase 2 results")
+        await query.edit_message_text("❌ Ошибка при получении данных. Попробуйте позже.")
+
+
+async def callback_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "cancel":
+        await query.edit_message_text("❌ Драфт отменён.")
+        context.user_data.clear()
+        return
+
+    if data == "phase2":
+        context.user_data["phase"] = 2
+        context.user_data["current_picks"] = []
+        await query.edit_message_text(
+            _pick_header(2, 0),
+            reply_markup=group_keyboard(),
+        )
+        return
+
+    if data == "back":
+        phase = context.user_data.get("phase", 1)
+        picks = context.user_data.get("current_picks", [])
+        await query.edit_message_text(
+            _pick_header(phase, len(picks), [p["localized_name"] for p in picks]),
+            reply_markup=group_keyboard(),
+        )
+        return
+
+    if data.startswith("group:"):
+        group = data[6:]
+        phase = context.user_data.get("phase", 1)
+        picks = context.user_data.get("current_picks", [])
+        heroes = heroes_for_group(_all_heroes, group)
+        await query.edit_message_text(
+            _pick_header(phase, len(picks), [p["localized_name"] for p in picks]),
+            reply_markup=hero_keyboard(heroes, group),
+        )
+        return
+
+    if data.startswith("hero:"):
+        slug = data[5:]
+        picks = context.user_data.setdefault("current_picks", [])
+        phase = context.user_data.get("phase", 1)
+
+        if any(p["slug"] == slug for p in picks):
+            return  # duplicate — ignore
+
+        hero = next((h for h in _all_heroes if h.slug == slug), None)
+        if hero is None:
+            return
+
+        picks.append({
+            "id": hero.id,
+            "slug": hero.slug,
+            "localized_name": hero.localized_name,
+        })
+
+        if len(picks) < 2:
+            await query.edit_message_text(
+                _pick_header(phase, len(picks), [p["localized_name"] for p in picks]),
+                reply_markup=group_keyboard(),
+            )
+            return
+
+        if phase == 1:
+            context.user_data["phase1_enemies"] = picks[:]
+            await _show_phase1_results(query, context)
+        else:
+            await _show_phase2_results(query, context)
 
 
 # ── simple commands ───────────────────────────────────────────────────────────
@@ -170,8 +245,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "📖 Помощь:\n\n"
         "/pick — запустить подбор пика\n"
-        "   Введи героев врага через запятую\n"
-        "   Поддерживаются аббревиатуры: am, cm, sf, pa, qop...\n\n"
+        "   Тапай группу букв → выбирай героя\n\n"
         "/meta — топ-10 героев по winrate в текущем патче\n\n"
         "/hero Crystal Maiden — статистика конкретного героя\n\n"
         "/profile 123456789 — привязать Steam ID (32-bit или 64-bit)\n"
@@ -298,20 +372,13 @@ def main() -> None:
         .post_shutdown(post_shutdown)
         .build()
     )
-    conv = ConversationHandler(
-        entry_points=[CommandHandler("pick", pick_start)],
-        states={
-            WAITING_ENEMIES: [MessageHandler(filters.TEXT & ~filters.COMMAND, pick_got_enemies)],
-            WAITING_ALLIES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, pick_got_allies),
-                CommandHandler("skip", pick_skip_allies),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", pick_cancel)],
-    )
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
-    app.add_handler(conv)
+    app.add_handler(CommandHandler("pick", cmd_pick))
+    app.add_handler(CallbackQueryHandler(
+        callback_pick,
+        pattern=r"^(group:[A-Z-]+|hero:[a-z_]+|back|phase2|cancel)$",
+    ))
     app.add_handler(CommandHandler("meta", cmd_meta))
     app.add_handler(CommandHandler("hero", cmd_hero))
     app.add_handler(CommandHandler("profile", cmd_profile))
