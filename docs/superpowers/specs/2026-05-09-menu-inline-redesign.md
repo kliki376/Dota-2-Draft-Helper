@@ -61,7 +61,15 @@ Callback data: `hero_info:hero:slug`
 ```
 Callback data: `profile:link`, `profile:close`
 
-После `profile:link` — бот отвечает текстом: "Отправьте ваш Steam ID (число из URL Dotabuff)". Ждёт следующего текстового сообщения от пользователя через `ConversationHandler` или флаг в `user_data`.
+После `profile:link` — бот отвечает текстом:
+```
+Отправьте ваш Steam ID.
+
+Найти его можно на Dotabuff — это число в URL вашего профиля:
+dotabuff.com/players/123456789
+                     ↑ вот это число
+```
+Ссылка на Dotabuff прикладывается как кликабельная. Ждёт следующего текстового сообщения от пользователя через флаг `user_data["awaiting_steam_id"] = True`.
 
 ### Состояние Б — профиль привязан:
 ```
