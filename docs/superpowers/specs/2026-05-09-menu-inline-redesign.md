@@ -64,12 +64,21 @@ Callback data: `profile:link`, `profile:close`
 После `profile:link` — бот отвечает текстом:
 ```
 Отправьте ваш Steam ID.
-
-Найти его можно на Dotabuff — это число в URL вашего профиля:
-dotabuff.com/players/123456789
-                     ↑ вот это число
 ```
-Ссылка на Dotabuff прикладывается как кликабельная. Ждёт следующего текстового сообщения от пользователя через флаг `user_data["awaiting_steam_id"] = True`.
+С inline-кнопкой под сообщением:
+```
+[❓ Как найти ID?]
+```
+Callback data: `profile:howto`
+
+После `profile:howto` — бот показывает два варианта:
+```
+[🎮 Через Steam] [⚔️ Через Dotabuff]
+```
+- **🎮 Через Steam** (`profile:howto:steam`) — открывает URL `https://steamid.io` с инструкцией в тексте: "Зайдите на steamid.io, введите ссылку на ваш профиль Steam — сайт покажет ваш ID"
+- **⚔️ Через Dotabuff** (`profile:howto:dotabuff`) — текст: "Зайдите на dotabuff.com, найдите свой профиль — число в URL и есть ваш ID: dotabuff.com/players/**123456789**"
+
+Ждёт следующего текстового сообщения от пользователя через флаг `user_data["awaiting_steam_id"] = True`.
 
 ### Состояние Б — профиль привязан:
 ```
