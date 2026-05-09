@@ -1,5 +1,5 @@
 import httpx
-from dota_bot.models import HeroInfo, HeroMeta, HeroMatchup, PlayerHeroStats, PlayerStats
+from dota_bot.models import HeroInfo, HeroMeta, HeroMatchup, PlayerHeroStats, PlayerStats, HeroMetaWithRole
 
 BASE_URL = "https://api.opendota.com/api"
 BRACKETS = [5, 6, 7, 8]
@@ -72,6 +72,26 @@ class OpenDotaClient:
             )
             for h in resp.json()
         ]
+
+    async def get_hero_stats_with_role(self) -> dict[int, HeroMetaWithRole]:
+        resp = await self._http.get(f"{BASE_URL}/heroStats")
+        resp.raise_for_status()
+        data = resp.json()
+        all_games = [sum(h.get(f"{b}_pick", 0) for b in BRACKETS) for h in data]
+        max_games = max(all_games, default=1)
+        result: dict[int, HeroMetaWithRole] = {}
+        for h, total_games in zip(data, all_games):
+            total_wins = sum(h.get(f"{b}_win", 0) for b in BRACKETS)
+            result[h["id"]] = HeroMetaWithRole(
+                hero_id=h["id"],
+                hero_slug=h["name"].replace("npc_dota_hero_", ""),
+                win_rate=total_wins / total_games if total_games > 0 else 0.5,
+                pick_rate=total_games / max_games,
+                pro_pick=h.get("pro_pick", 0),
+                pro_win=h.get("pro_win", 0),
+                lane_role=h.get("lane_role", 0),
+            )
+        return result
 
     async def get_player_stats(self, account_id: int) -> PlayerStats:
         resp = await self._http.get(f"{BASE_URL}/players/{account_id}")
