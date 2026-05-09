@@ -7,12 +7,14 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 
 from dota_bot.cache import Cache
 from dota_bot.config import BOT_TOKEN, CACHE_FILE, CACHE_TTL_SECONDS, OPENDOTA_API_KEY
 from dota_bot.formatter import format_meta, format_picks
-from dota_bot.keyboards import group_keyboard, hero_keyboard, heroes_for_group
+from dota_bot.keyboards import group_keyboard, hero_keyboard, heroes_for_group, main_keyboard
 from dota_bot.models import HeroInfo, HeroMatchup, HeroMeta, PlayerHeroStats
 from dota_bot.parsers.hero_names import HeroNameResolver
 from dota_bot.parsers.opendota_api import OpenDotaClient
@@ -119,8 +121,9 @@ async def _show_phase1_results(query, context: ContextTypes.DEFAULT_TYPE) -> Non
             plist = await _client.get_player_heroes(account_id, id_to_slug)
             player_stats = {p.hero_id: p for p in plist}
         scores = score_picks(enemies, _all_heroes, hero_stats, enemy_matchups, player_stats)
-        text = format_picks(scores, with_profile=bool(account_id))
-        text += "\n\n━━━━━━━━━━━━━━━━━━━━\nГотов к фазе 2? Выбери следующих двух врагов."
+        enemy_names = [e.localized_name for e in enemies]
+        text = format_picks(scores, with_profile=bool(account_id), enemy_names=enemy_names)
+        text += "\n\nГотов к фазе 2? Выбери следующих двух врагов."
         await query.edit_message_text(
             text,
             reply_markup=InlineKeyboardMarkup([
@@ -147,8 +150,8 @@ async def _show_phase2_results(query, context: ContextTypes.DEFAULT_TYPE) -> Non
             plist = await _client.get_player_heroes(account_id, id_to_slug)
             player_stats = {p.hero_id: p for p in plist}
         scores = score_picks(all_enemies, _all_heroes, hero_stats, enemy_matchups, player_stats, top_n=3)
-        text = "🏆 Ласт пик — лучший выбор против всех 4 врагов:\n\n"
-        text += format_picks(scores, with_profile=bool(account_id))
+        enemy_names = [e.localized_name for e in all_enemies]
+        text = "🏆 Ласт пик\n\n" + format_picks(scores, with_profile=bool(account_id), enemy_names=enemy_names)
         await query.edit_message_text(text)
         context.user_data.clear()
     except Exception:
@@ -232,12 +235,13 @@ async def callback_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "👋 Привет! Я помогу подобрать оптимальный пик в Dota 2.\n\n"
-        "📋 Команды:\n"
-        "/pick — подобрать героя по врагам\n"
-        "/meta — топ героев текущей меты\n"
+        "Используй кнопки внизу или команды:\n"
+        "/pick — подобрать пик\n"
+        "/meta — топ меты\n"
         "/hero <имя> — статистика героя\n"
-        "/profile — привязать Dotabuff профиль\n"
-        "/help — помощь"
+        "/profile — профиль\n"
+        "/help — помощь",
+        reply_markup=main_keyboard(),
     )
 
 
@@ -346,6 +350,20 @@ async def cmd_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text("✅ Кэш очищен. Следующий запрос загрузит свежие данные.")
 
 
+# ── reply keyboard button handler ────────────────────────────────────────────
+
+async def handle_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = update.message.text
+    if text == "🎯 Пик":
+        await cmd_pick(update, context)
+    elif text == "📈 Мета":
+        await cmd_meta(update, context)
+    elif text == "🦸 Герой":
+        await update.message.reply_text("Укажите имя героя: /hero Crystal Maiden")
+    elif text == "👤 Профиль":
+        await cmd_profile(update, context)
+
+
 # ── application lifecycle ─────────────────────────────────────────────────────
 
 async def post_init(application: Application) -> None:
@@ -375,6 +393,10 @@ def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("pick", cmd_pick))
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.Regex(r"^(🎯 Пик|📈 Мета|🦸 Герой|👤 Профиль)$"),
+        handle_menu_button,
+    ))
     app.add_handler(CallbackQueryHandler(
         callback_pick,
         pattern=r"^(group:[A-Z-]+|hero:[a-z_]+|back|phase2|cancel)$",

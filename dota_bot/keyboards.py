@@ -1,5 +1,16 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from dota_bot.models import HeroInfo
+
+
+def main_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("🎯 Пик"), KeyboardButton("📈 Мета")],
+            [KeyboardButton("🦸 Герой"), KeyboardButton("👤 Профиль")],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
 
 LETTER_GROUPS: list[tuple[str, str]] = [
     ("A-C", "ABC"),
