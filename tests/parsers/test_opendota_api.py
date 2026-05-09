@@ -108,7 +108,7 @@ async def test_get_player_heroes(client):
 
 @pytest.mark.asyncio
 async def test_get_player_stats(respx_mock):
-    respx_mock.get("https://api.opendota.com/api/players/123").mock(
+    respx_mock.get("https://api.opendota.com/api/players/123/wl").mock(
         return_value=httpx.Response(200, json={"win": 150, "lose": 100})
     )
     client = OpenDotaClient()

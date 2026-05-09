@@ -94,7 +94,7 @@ class OpenDotaClient:
         return result
 
     async def get_player_stats(self, account_id: int) -> PlayerStats:
-        resp = await self._http.get(f"{BASE_URL}/players/{account_id}")
+        resp = await self._http.get(f"{BASE_URL}/players/{account_id}/wl")
         resp.raise_for_status()
         data = resp.json()
         return PlayerStats(
