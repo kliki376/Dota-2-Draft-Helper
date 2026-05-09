@@ -13,9 +13,13 @@ from telegram.ext import (
 
 from dota_bot.cache import Cache
 from dota_bot.config import BOT_TOKEN, CACHE_FILE, CACHE_TTL_SECONDS, OPENDOTA_API_KEY
-from dota_bot.formatter import format_meta, format_picks
-from dota_bot.keyboards import group_keyboard, hero_keyboard, heroes_for_group, main_keyboard
-from dota_bot.models import HeroInfo, HeroMatchup, HeroMeta, PlayerHeroStats
+from dota_bot.formatter import format_meta, format_picks, format_meta_by_position, format_player_stats, format_top_heroes
+from dota_bot.keyboards import (
+    group_keyboard, hero_keyboard, heroes_for_group, main_keyboard,
+    meta_position_keyboard, profile_keyboard_unlinked, profile_keyboard_linked,
+    howto_keyboard, hero_info_group_keyboard, hero_info_hero_keyboard,
+)
+from dota_bot.models import HeroInfo, HeroMatchup, HeroMeta, HeroMetaWithRole, PlayerHeroStats, PlayerStats
 from dota_bot.parsers.hero_names import HeroNameResolver
 from dota_bot.parsers.opendota_api import OpenDotaClient
 from dota_bot.profile import ProfileStore
@@ -357,11 +361,242 @@ async def handle_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if text == "🎯 Пик":
         await cmd_pick(update, context)
     elif text == "📈 Мета":
-        await cmd_meta(update, context)
+        await update.message.reply_text(
+            "📈 Выберите позицию:",
+            reply_markup=meta_position_keyboard(),
+        )
     elif text == "🦸 Герой":
-        await update.message.reply_text("Укажите имя героя: /hero Crystal Maiden")
+        await update.message.reply_text(
+            "🦸 Выберите первую букву имени героя:",
+            reply_markup=hero_info_group_keyboard(),
+        )
     elif text == "👤 Профиль":
-        await cmd_profile(update, context)
+        account_id = _profiles.get(update.effective_user.id)
+        if account_id:
+            await update.message.reply_text(
+                f"👤 Профиль привязан: Steam ID {account_id}",
+                reply_markup=profile_keyboard_linked(),
+            )
+        else:
+            await update.message.reply_text(
+                "👤 Профиль не привязан.",
+                reply_markup=profile_keyboard_unlinked(),
+            )
+
+
+async def callback_meta(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "meta:cancel":
+        await query.edit_message_text("❌ Отменено.")
+        return
+
+    if data.startswith("meta:pos:"):
+        position = int(data[-1])
+        await query.edit_message_text("⏳ Загружаю данные меты...")
+        try:
+            hero_stats = await _client.get_hero_stats_with_role()
+            hero_info_map = {h.id: h for h in _all_heroes}
+            filtered = sorted(
+                [
+                    (hero_info_map[hid], meta)
+                    for hid, meta in hero_stats.items()
+                    if hid in hero_info_map
+                    and meta.lane_role == position
+                    and meta.pick_rate > 0.02
+                ],
+                key=lambda x: x[1].win_rate,
+                reverse=True,
+            )[:10]
+            await query.edit_message_text(format_meta_by_position(filtered, position))
+        except Exception:
+            logger.exception("Error in callback_meta")
+            await query.edit_message_text("❌ Ошибка при загрузке данных.")
+
+
+async def callback_hero_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "hero_info:cancel":
+        await query.edit_message_text("❌ Отменено.")
+        return
+
+    if data == "hero_info:back":
+        await query.edit_message_text(
+            "🦸 Выберите первую букву имени героя:",
+            reply_markup=hero_info_group_keyboard(),
+        )
+        return
+
+    if data.startswith("hero_info:group:"):
+        group = data[len("hero_info:group:"):]
+        heroes = heroes_for_group(_all_heroes, group)
+        await query.edit_message_text(
+            "🦸 Выберите героя:",
+            reply_markup=hero_info_hero_keyboard(heroes),
+        )
+        return
+
+    if data.startswith("hero_info:hero:"):
+        slug = data[len("hero_info:hero:"):]
+        hero = next((h for h in _all_heroes if h.slug == slug), None)
+        if hero is None:
+            await query.edit_message_text("❌ Герой не найден.")
+            return
+        try:
+            hero_stats = await _fetch_hero_stats()
+            meta = hero_stats.get(hero.id)
+            if not meta:
+                await query.edit_message_text("Нет данных по этому герою.")
+                return
+            pro_wr = (
+                f"{meta.pro_win / meta.pro_pick * 100:.0f}%"
+                if meta.pro_pick >= 20
+                else "мало данных"
+            )
+            await query.edit_message_text(
+                f"🦸 {hero.localized_name}\n\n"
+                f"📊 Winrate: {meta.win_rate * 100:.1f}%\n"
+                f"🏆 Про WR: {pro_wr} ({meta.pro_pick} пиков)\n"
+                f"📈 Популярность: {meta.pick_rate * 100:.0f}%",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("← Назад", callback_data="hero_info:back")]
+                ]),
+            )
+        except Exception:
+            logger.exception("Error in callback_hero_info")
+            await query.edit_message_text("❌ Ошибка при загрузке данных.")
+
+
+async def callback_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    user_id = query.from_user.id
+
+    if data in ("profile:close", "profile:back"):
+        await query.edit_message_text("👤 Закрыто.")
+        return
+
+    if data == "profile:link":
+        context.user_data["awaiting_steam_id"] = True
+        await query.edit_message_text(
+            "Отправьте ваш Steam ID числом в чат.\n\nНе знаете где найти?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❓ Как найти ID?", callback_data="profile:howto")]
+            ]),
+        )
+        return
+
+    if data == "profile:howto":
+        await query.edit_message_text(
+            "Как найти Steam ID?\n\nВыберите способ:",
+            reply_markup=howto_keyboard(),
+        )
+        return
+
+    if data == "profile:howto:steam":
+        context.user_data["awaiting_steam_id"] = True
+        await query.edit_message_text(
+            "🎮 Через Steam:\n\n"
+            "1. Зайдите на https://steamid.io\n"
+            "2. Вставьте ссылку на ваш профиль Steam\n"
+            "3. Сайт покажет ваш Steam ID (32-bit)\n\n"
+            "Скопируйте число и отправьте мне:"
+        )
+        return
+
+    if data == "profile:howto:dotabuff":
+        context.user_data["awaiting_steam_id"] = True
+        await query.edit_message_text(
+            "⚔️ Через Dotabuff:\n\n"
+            "1. Зайдите на https://www.dotabuff.com\n"
+            "2. Найдите свой профиль\n"
+            "3. Число в URL — это ваш ID:\n"
+            "   dotabuff.com/players/123456789\n"
+            "                        ↑ вот это\n\n"
+            "Скопируйте число и отправьте мне:"
+        )
+        return
+
+    if data == "profile:unlink":
+        _profiles.remove(user_id)
+        await query.edit_message_text(
+            "✅ Профиль отвязан.",
+            reply_markup=profile_keyboard_unlinked(),
+        )
+        return
+
+    account_id = _profiles.get(user_id)
+    if not account_id:
+        await query.edit_message_text(
+            "👤 Профиль не привязан.",
+            reply_markup=profile_keyboard_unlinked(),
+        )
+        return
+
+    if data == "profile:top_heroes":
+        await query.edit_message_text("⏳ Загружаю...")
+        try:
+            id_to_slug = {h.id: h.slug for h in _all_heroes}
+            heroes = await _client.get_player_heroes(account_id, id_to_slug)
+            top = sorted(heroes, key=lambda h: h.games, reverse=True)[:5]
+            hero_info_map = {h.id: h for h in _all_heroes}
+            text = format_top_heroes(top, hero_info_map)
+            await query.edit_message_text(text, reply_markup=profile_keyboard_linked())
+        except Exception:
+            logger.exception("Error in profile:top_heroes")
+            await query.edit_message_text("❌ Ошибка при загрузке данных.", reply_markup=profile_keyboard_linked())
+        return
+
+    if data == "profile:stats:all":
+        await query.edit_message_text("⏳ Загружаю...")
+        try:
+            stats = await _client.get_player_stats(account_id)
+            text = format_player_stats(stats, label="Все игры")
+            await query.edit_message_text(text, reply_markup=profile_keyboard_linked())
+        except Exception:
+            logger.exception("Error in profile:stats:all")
+            await query.edit_message_text("❌ Ошибка при загрузке данных.", reply_markup=profile_keyboard_linked())
+        return
+
+    if data == "profile:stats:ranked":
+        await query.edit_message_text("⏳ Загружаю...")
+        try:
+            stats = await _client.get_player_stats_ranked(account_id)
+            text = format_player_stats(stats, label="Рейтинговые игры")
+            await query.edit_message_text(text, reply_markup=profile_keyboard_linked())
+        except Exception:
+            logger.exception("Error in profile:stats:ranked")
+            await query.edit_message_text("❌ Ошибка при загрузке данных.", reply_markup=profile_keyboard_linked())
+        return
+
+
+async def handle_steam_id_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.user_data.get("awaiting_steam_id"):
+        return
+    context.user_data["awaiting_steam_id"] = False
+    user_id = update.effective_user.id
+    account_id = _parse_steam_id(update.message.text.strip())
+    if account_id is None:
+        await update.message.reply_text(
+            "❌ Неверный Steam ID. Отправьте число из URL профиля Dotabuff.\n"
+            "Пример: 123456789",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❓ Как найти ID?", callback_data="profile:howto")]
+            ]),
+        )
+        context.user_data["awaiting_steam_id"] = True
+        return
+    _profiles.set(user_id, account_id)
+    await update.message.reply_text(
+        f"✅ Профиль привязан! Steam ID: {account_id}",
+        reply_markup=profile_keyboard_linked(),
+    )
 
 
 # ── application lifecycle ─────────────────────────────────────────────────────
@@ -390,16 +625,32 @@ def main() -> None:
         .post_shutdown(post_shutdown)
         .build()
     )
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        handle_steam_id_input,
+    ), group=0)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("pick", cmd_pick))
     app.add_handler(MessageHandler(
         filters.TEXT & filters.Regex(r"^(🎯 Пик|📈 Мета|🦸 Герой|👤 Профиль)$"),
         handle_menu_button,
-    ))
+    ), group=1)
     app.add_handler(CallbackQueryHandler(
         callback_pick,
         pattern=r"^(group:[A-Z-]+|hero:[a-z_]+|back|phase2|cancel)$",
+    ))
+    app.add_handler(CallbackQueryHandler(
+        callback_meta,
+        pattern=r"^meta:(pos:[1-5]|cancel)$",
+    ))
+    app.add_handler(CallbackQueryHandler(
+        callback_hero_info,
+        pattern=r"^hero_info:(group:[A-Z-]+|hero:[a-z0-9_]+|back|cancel)$",
+    ))
+    app.add_handler(CallbackQueryHandler(
+        callback_profile,
+        pattern=r"^profile:(link|close|back|howto|howto:steam|howto:dotabuff|unlink|top_heroes|stats:all|stats:ranked)$",
     ))
     app.add_handler(CommandHandler("meta", cmd_meta))
     app.add_handler(CommandHandler("hero", cmd_hero))
