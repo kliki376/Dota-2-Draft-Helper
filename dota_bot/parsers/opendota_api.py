@@ -1,5 +1,5 @@
 import httpx
-from dota_bot.models import HeroInfo, HeroMeta, HeroMatchup, PlayerHeroStats
+from dota_bot.models import HeroInfo, HeroMeta, HeroMatchup, PlayerHeroStats, PlayerStats
 
 BASE_URL = "https://api.opendota.com/api"
 BRACKETS = [5, 6, 7, 8]
@@ -72,6 +72,24 @@ class OpenDotaClient:
             )
             for h in resp.json()
         ]
+
+    async def get_player_stats(self, account_id: int) -> PlayerStats:
+        resp = await self._http.get(f"{BASE_URL}/players/{account_id}")
+        resp.raise_for_status()
+        data = resp.json()
+        return PlayerStats(
+            wins=data.get("win", 0),
+            losses=data.get("lose", 0),
+        )
+
+    async def get_player_stats_ranked(self, account_id: int) -> PlayerStats:
+        resp = await self._http.get(f"{BASE_URL}/players/{account_id}/wl", params={"lobby_type": 7})
+        resp.raise_for_status()
+        data = resp.json()
+        return PlayerStats(
+            wins=data.get("win", 0),
+            losses=data.get("lose", 0),
+        )
 
     async def close(self) -> None:
         await self._http.aclose()

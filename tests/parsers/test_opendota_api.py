@@ -1,4 +1,5 @@
 import pytest
+import httpx
 from unittest.mock import AsyncMock, MagicMock, patch
 from dota_bot.parsers.opendota_api import OpenDotaClient
 from dota_bot.models import HeroInfo, HeroMeta, HeroMatchup, PlayerHeroStats
@@ -103,3 +104,28 @@ async def test_get_player_heroes(client):
     assert am.wins == 82
     assert am.hero_slug == "antimage"
     assert am.win_rate == pytest.approx(82 / 150)
+
+
+@pytest.mark.asyncio
+async def test_get_player_stats(respx_mock):
+    respx_mock.get("https://api.opendota.com/api/players/123").mock(
+        return_value=httpx.Response(200, json={"win": 150, "lose": 100})
+    )
+    client = OpenDotaClient()
+    stats = await client.get_player_stats(123)
+    assert stats.wins == 150
+    assert stats.losses == 100
+    assert abs(stats.win_rate - 0.6) < 0.001
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_get_player_stats_ranked(respx_mock):
+    respx_mock.get("https://api.opendota.com/api/players/123/wl").mock(
+        return_value=httpx.Response(200, json={"win": 80, "lose": 50})
+    )
+    client = OpenDotaClient()
+    stats = await client.get_player_stats_ranked(123)
+    assert stats.wins == 80
+    assert stats.losses == 50
+    await client.close()
