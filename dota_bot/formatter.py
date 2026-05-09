@@ -1,4 +1,4 @@
-from dota_bot.models import HeroScore, HeroInfo, HeroMeta
+from dota_bot.models import HeroScore, HeroInfo, HeroMeta, HeroMetaWithRole, PlayerStats, PlayerHeroStats
 
 
 def _slug_to_display(slug: str) -> str:
@@ -59,4 +59,52 @@ def format_meta(hero_metas: list[tuple[HeroInfo, HeroMeta]]) -> str:
         lines.append(
             f"{i}. {info.localized_name} — WR {meta.win_rate * 100:.1f}% | Про: {pro_wr}"
         )
+    return "\n".join(lines)
+
+
+POSITION_NAMES = {1: "Carry", 2: "Mid", 3: "Offlane", 4: "Soft Support", 5: "Hard Support"}
+
+
+def format_meta_by_position(
+    hero_metas: list[tuple[HeroInfo, HeroMetaWithRole]],
+    position: int,
+) -> str:
+    pos_name = POSITION_NAMES.get(position, str(position))
+    if not hero_metas:
+        return f"Нет данных о мете для позиции {pos_name}."
+    lines = [f"📈 Топ героев — {pos_name}:\n"]
+    for i, (info, meta) in enumerate(hero_metas, 1):
+        pro_wr = (
+            f"{meta.pro_win / meta.pro_pick * 100:.0f}%"
+            if meta.pro_pick >= 20
+            else "—"
+        )
+        lines.append(
+            f"{i}. {info.localized_name} — WR {meta.win_rate * 100:.1f}% | Про: {pro_wr}"
+        )
+    return "\n".join(lines)
+
+
+def format_player_stats(stats: PlayerStats, label: str) -> str:
+    wr = stats.win_rate * 100
+    return (
+        f"📊 {label}\n\n"
+        f"Игр: {stats.games}\n"
+        f"Побед: {stats.wins} | Поражений: {stats.losses}\n"
+        f"Winrate: {wr:.1f}%"
+    )
+
+
+def format_top_heroes(
+    heroes: list[PlayerHeroStats],
+    hero_info_map: dict[int, HeroInfo],
+) -> str:
+    if not heroes:
+        return "Нет данных об играх."
+    lines = ["🏅 Лучшие герои:\n"]
+    for i, h in enumerate(heroes[:5], 1):
+        info = hero_info_map.get(h.hero_id)
+        name = info.localized_name if info else h.hero_slug
+        wr = h.win_rate * 100
+        lines.append(f"{i}. {name} — {h.games} игр | WR {wr:.0f}%")
     return "\n".join(lines)

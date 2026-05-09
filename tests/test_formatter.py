@@ -89,3 +89,38 @@ def test_format_meta_contains_heroes():
     msg = format_meta(hero_metas)
     assert "Silencer" in msg
     assert "54" in msg or "55" in msg  # 54.5% displayed
+
+
+from dota_bot.formatter import format_meta_by_position, format_player_stats, format_top_heroes
+from dota_bot.models import HeroMetaWithRole, PlayerStats, PlayerHeroStats
+
+
+def test_format_meta_by_position():
+    info = HeroInfo(id=1, slug="antimage", localized_name="Anti-Mage")
+    meta = HeroMetaWithRole(
+        hero_id=1, hero_slug="antimage", win_rate=0.54,
+        pick_rate=0.8, pro_pick=50, pro_win=28, lane_role=1,
+    )
+    result = format_meta_by_position([(info, meta)], position=1)
+    assert "Anti-Mage" in result
+    assert "54" in result
+    assert "Carry" in result
+
+
+def test_format_player_stats():
+    stats = PlayerStats(wins=100, losses=80)
+    result = format_player_stats(stats, label="Все игры")
+    assert "180" in result
+    assert "55" in result
+    assert "Все игры" in result
+
+
+def test_format_top_heroes():
+    heroes = [
+        PlayerHeroStats(hero_id=1, hero_slug="antimage", games=50, wins=30),
+    ]
+    hero_info_map = {1: HeroInfo(id=1, slug="antimage", localized_name="Anti-Mage")}
+    result = format_top_heroes(heroes, hero_info_map)
+    assert "Anti-Mage" in result
+    assert "50" in result
+    assert "60" in result
