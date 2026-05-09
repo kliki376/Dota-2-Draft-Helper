@@ -48,3 +48,23 @@ class HeroScore:
     player_games: int = 0
     player_win_rate: float = 0.0
     matchup_details: list[HeroMatchup] = field(default_factory=list)
+
+
+@dataclass
+class PlayerStats:
+    wins: int
+    losses: int
+    kda: float = 0.0
+
+    @property
+    def games(self) -> int:
+        return self.wins + self.losses
+
+    @property
+    def win_rate(self) -> float:
+        return self.wins / self.games if self.games > 0 else 0.0
+
+
+@dataclass
+class HeroMetaWithRole(HeroMeta):
+    lane_role: int = 0  # 1=Carry, 2=Mid, 3=Offlane, 4=Soft Support, 5=Hard Support

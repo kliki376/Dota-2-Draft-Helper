@@ -1,4 +1,5 @@
 import pytest
+import httpx
 from unittest.mock import AsyncMock, MagicMock, patch
 from dota_bot.parsers.opendota_api import OpenDotaClient
 from dota_bot.models import HeroInfo, HeroMeta, HeroMatchup, PlayerHeroStats
@@ -103,3 +104,48 @@ async def test_get_player_heroes(client):
     assert am.wins == 82
     assert am.hero_slug == "antimage"
     assert am.win_rate == pytest.approx(82 / 150)
+
+
+@pytest.mark.asyncio
+async def test_get_player_stats(respx_mock):
+    respx_mock.get("https://api.opendota.com/api/players/123").mock(
+        return_value=httpx.Response(200, json={"win": 150, "lose": 100})
+    )
+    client = OpenDotaClient()
+    stats = await client.get_player_stats(123)
+    assert stats.wins == 150
+    assert stats.losses == 100
+    assert abs(stats.win_rate - 0.6) < 0.001
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_get_player_stats_ranked(respx_mock):
+    respx_mock.get("https://api.opendota.com/api/players/123/wl").mock(
+        return_value=httpx.Response(200, json={"win": 80, "lose": 50})
+    )
+    client = OpenDotaClient()
+    stats = await client.get_player_stats_ranked(123)
+    assert stats.wins == 80
+    assert stats.losses == 50
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_get_hero_stats_with_role(respx_mock):
+    respx_mock.get("https://api.opendota.com/api/heroStats").mock(
+        return_value=httpx.Response(200, json=[
+            {
+                "id": 1, "name": "npc_dota_hero_antimage", "localized_name": "Anti-Mage",
+                "5_pick": 100, "5_win": 55, "6_pick": 50, "6_win": 28,
+                "7_pick": 80, "7_win": 44, "8_pick": 30, "8_win": 16,
+                "pro_pick": 10, "pro_win": 6, "1_pick": 200, "lane_role": 1,
+            }
+        ])
+    )
+    client = OpenDotaClient()
+    stats = await client.get_hero_stats_with_role()
+    assert 1 in stats
+    assert stats[1].lane_role == 1
+    assert stats[1].hero_slug == "antimage"
+    await client.close()
