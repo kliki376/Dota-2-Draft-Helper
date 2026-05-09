@@ -76,3 +76,57 @@ def test_heroes_for_group_sorted_alphabetically():
     result = heroes_for_group(heroes, "A-C")
     assert result[0].localized_name == "Anti-Mage"
     assert result[1].localized_name == "Axe"
+
+
+from dota_bot.keyboards import (
+    meta_position_keyboard, profile_keyboard_unlinked,
+    profile_keyboard_linked, howto_keyboard,
+    hero_info_group_keyboard, hero_info_hero_keyboard,
+)
+
+
+def test_meta_position_keyboard():
+    kb = meta_position_keyboard()
+    all_data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    assert "meta:pos:1" in all_data
+    assert "meta:pos:5" in all_data
+    assert "meta:cancel" in all_data
+
+
+def test_profile_keyboard_unlinked():
+    kb = profile_keyboard_unlinked()
+    all_data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    assert "profile:link" in all_data
+    assert "profile:close" in all_data
+
+
+def test_profile_keyboard_linked():
+    kb = profile_keyboard_linked()
+    all_data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    assert "profile:top_heroes" in all_data
+    assert "profile:stats:all" in all_data
+    assert "profile:stats:ranked" in all_data
+    assert "profile:unlink" in all_data
+    assert "profile:back" in all_data
+
+
+def test_howto_keyboard():
+    kb = howto_keyboard()
+    all_data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    assert "profile:howto:steam" in all_data
+    assert "profile:howto:dotabuff" in all_data
+
+
+def test_hero_info_group_keyboard():
+    kb = hero_info_group_keyboard()
+    all_data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    assert any(d.startswith("hero_info:group:") for d in all_data)
+    assert "hero_info:cancel" in all_data
+
+
+def test_hero_info_hero_keyboard():
+    heroes = [HeroInfo(id=1, slug="antimage", localized_name="Anti-Mage")]
+    kb = hero_info_hero_keyboard(heroes)
+    all_data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    assert "hero_info:hero:antimage" in all_data
+    assert "hero_info:back" in all_data
