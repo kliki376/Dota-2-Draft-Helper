@@ -393,6 +393,26 @@ async def callback_meta(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await query.edit_message_text("❌ Отменено.")
         return
 
+    if data == "meta:top10":
+        await query.edit_message_text("⏳ Загружаю данные меты...")
+        try:
+            hero_stats = await _fetch_hero_stats()
+            hero_info_map = {h.id: h for h in _all_heroes}
+            sorted_heroes = sorted(
+                [
+                    (hero_info_map[hid], meta)
+                    for hid, meta in hero_stats.items()
+                    if hid in hero_info_map and meta.pick_rate > 0.05
+                ],
+                key=lambda x: x[1].win_rate,
+                reverse=True,
+            )[:10]
+            await query.edit_message_text(format_meta(sorted_heroes))
+        except Exception:
+            logger.exception("Error in callback_meta top10")
+            await query.edit_message_text("❌ Ошибка при загрузке данных.")
+        return
+
     if data.startswith("meta:pos:"):
         position = int(data[-1])
         await query.edit_message_text("⏳ Загружаю данные меты...")
@@ -642,7 +662,7 @@ def main() -> None:
     ))
     app.add_handler(CallbackQueryHandler(
         callback_meta,
-        pattern=r"^meta:(pos:[1-5]|cancel)$",
+        pattern=r"^meta:(pos:[1-5]|cancel|top10)$",
     ))
     app.add_handler(CallbackQueryHandler(
         callback_hero_info,
